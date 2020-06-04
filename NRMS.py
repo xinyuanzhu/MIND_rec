@@ -192,11 +192,11 @@ class NRMS(nn.Module):
 
         user_rep = self.user_encoder(news_enc_out).reshape(-1, 1, 300)
         candidates_enc_out = self.news_encoder_list_candidates[0](
-            news_emb_seq[:, 0])
+            cand_emb_seq[:, 0])
         candidates_enc_out = candidates_enc_out.view(
             1, candidates_enc_out.shape[0], candidates_enc_out.shape[1])
         for i, encoder in enumerate(self.news_encoder_list_candidates[1:]):
-            tmp = encoder(news_emb_seq[:, i+1])
+            tmp = encoder(cand_emb_seq[:, i+1])
             tmp = tmp.view(1, tmp.shape[0], tmp.shape[1])
             candidates_enc_out = torch.cat((candidates_enc_out, tmp), dim=0)
         candidates_enc_out = candidates_enc_out.transpose(0, 1).transpose(1, 2)
@@ -216,9 +216,15 @@ def train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu):
     for epoch in range(epN):
         running_loss = 0.0
         for i, data in enumerate(traindataloader, 0):
-            news_input, candidates, labels = data
-            news_input = news_input.long()
+            candidates, news_input, labels = data
             candidates = candidates.long()
+            news_input = news_input.long()
+            # candidates: 64*5*30
+            # news_input: 64*50*30
+            # lables
+            if i == 1:
+                print(labels.shape)
+            
             if gpu:
                 news_input.cuda()
                 candidates.cuda()
@@ -228,7 +234,9 @@ def train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu):
             optimizer.zero_grad()
 
             outputs = model(news_input, candidates)
-            loss = criterion(outputs, labels)
+            print(outputs.shape, labels.shape)
+            loss = criterion(outputs, torch.max(labels, 1)[1])
+            
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
