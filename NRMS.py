@@ -12,6 +12,7 @@ import nltk
 from nltk.tokenize import word_tokenize
 from Encoder_models import *
 from utils import *
+import torch.optim as optim
 
 
 def MINDsmall_load(data_path, behaviors_fname="behaviors.tsv", news_fname="news.tsv"):
@@ -20,7 +21,6 @@ def MINDsmall_load(data_path, behaviors_fname="behaviors.tsv", news_fname="news.
     test_behaviors = np.genfromtxt(fname=os.path.join(
         data_path, "MINDsmall_dev", behaviors_fname), delimiter="\t", comments=None, dtype=str, encoding='UTF-8')
     # print(train_behaviors.shape)
-    train_Users_ID = train_behaviors[:, 0]
     train_browsed_data_raw = train_behaviors[:, 2]
     train_candidate_data_raw = train_behaviors[:, 3]
 
@@ -88,14 +88,13 @@ def MINDsmall_load(data_path, behaviors_fname="behaviors.tsv", news_fname="news.
             train_label.append(candidate_label_shuffle)
             train_user_his.append(
                 click_his_index+[0]*(50-len(click_his_index)))
-    test_Users_ID = test_behaviors[:, 0]
+
     test_browsed_data_raw = test_behaviors[:, 2]
     test_candidate_data_raw = test_behaviors[:, 3]
 
     test_candidate = []
+    test_label = []
     test_user_his = []
-    test_index = []
-    test_session_data = []
 
     for i in range(len(test_browsed_data_raw)):
         click_his_ids = [x for x in str(
@@ -107,28 +106,59 @@ def MINDsmall_load(data_path, behaviors_fname="behaviors.tsv", news_fname="news.
         news_id_in_impression = candidate_data[:, 0]
         news_label_in_impression = candidate_data[:, 1]
 
-        alldoc_id = news_id_in_impression[news_label_in_impression == '1']
-        alldoc_index = np.array([newsindex[x] for x in alldoc_id])
+        pos_news_ids = news_id_in_impression[news_label_in_impression == '1']
+        pos_news_index = np.array([newsindex[x] for x in pos_news_ids])
         neg_news_ids = news_id_in_impression[news_label_in_impression == '0']
-        test_session_data.append([test_Users_ID[i], alldoc_id, neg_news_ids])
-        index = []
-        index.append(len(test_candidate))
-        for doc in alldoc_index:
-            test_candidate.append(doc)
-            test_user_his.append(click_his_index+[0]*(50-len(click_his_index)))
-        index = []
-        index.append(len(test_candidate))
-        test_index.append(index)
+        neg_news_index = np.array([newsindex[x] for x in neg_news_ids])
+        for pos_news in pos_news_index:
+            negd = gen_neg_samples_with_npratio(neg_news_index, neg_pos_ratio)
+            negd.append(pos_news)
+            candidate_label = [0]*neg_pos_ratio+[1]
+            candidate_order = list(range(neg_pos_ratio+1))
+            random.shuffle(candidate_order)
+            candidate_shuffle = []
+            candidate_label_shuffle = []
+            for i in candidate_order:
+                candidate_shuffle.append(negd[i])
+                candidate_label_shuffle.append(candidate_label[i])
+            test_candidate.append(candidate_shuffle)
+            test_label.append(candidate_label_shuffle)
+            test_user_his.append(
+                click_his_index+[0]*(50-len(click_his_index)))
 
     train_candidate = np.array(train_candidate, dtype='int32')
     train_label = np.array(train_label, dtype='int32')
     train_user_his = np.array(train_user_his, dtype='int32')
 
     test_candidate = np.array(test_candidate, dtype='int32')
+    test_label = np.array(test_label, dtype='int32')
     test_user_his = np.array(test_user_his, dtype='int32')
 
-    return train_candidate, train_label, train_user_his, test_candidate, \
-        test_user_his, test_index, test_session_data, word_dict
+    return train_candidate, train_label, train_user_his, test_candidate, test_label, \
+        test_user_his, word_dict, news_title
+
+
+class mind_dataset(torch.utils.data.Dataset):
+    """Some Information about mind_dataset"""
+
+    def __init__(self, candidate, user_his, news_title, label):
+        super(mind_dataset, self).__init__()
+        idlist = np.arange(len(label))
+        np.random.shuffle(idlist)
+        self.y = label
+        self.candidate = candidate
+        self.user_his = user_his
+        self.news_title = news_title
+
+    def __getitem__(self, index):
+        return (
+            self.news_title[self.train_candidate[index]],
+            self.news_title[self.user_his[index]],
+            self.y[index]
+        )
+
+    def __len__(self):
+        return len(self.y)
 
 
 class NRMS(nn.Module):
@@ -148,39 +178,73 @@ class NRMS(nn.Module):
         news_emb_seq = self.src_word_emb(news_input).long()
         cand_emb_seq = self.src_word_emb(candidates).long()
         print(news_emb_seq.type())
-        '''
-        for ind, news_encoder in enumerate(self.news_encoder_list):
-            news_rep_list.append(news_encoder(emb_seq[ind]))
-        '''
+
         news_enc_out = self.news_encoder(news_emb_seq.float())
-        
-        news_enc_out = news_enc_out.view(1, news_enc_out.shape[0], news_enc_out.shape[1])
-        
+
+        news_enc_out = news_enc_out.view(
+            1, news_enc_out.shape[0], news_enc_out.shape[1])
+
         user_rep = self.user_encoder(news_enc_out)
         candi_vec = self.news_encoder(cand_emb_seq.float()).reshape(-1, 5)
         pred_score = F.softmax(torch.matmul(user_rep, candi_vec))
         return pred_score
 
 
+def train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu):
+
+    print("Training Strat......")
+    optimizer = optim.Adam(params=model.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+    for epoch in range(epN):
+        running_loss = 0.0
+        for i, data in enumerate(traindataloader, 0):
+            news_input, candidates, labels = data
+            if gpu:
+                news_input.cuda()
+                candidates.cuda()
+                labels.cuda()
+                criterion.cuda()
+
+            optimizer.zero_grad()
+
+            outputs = model(news_input, candidates)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+        print("Epoch: {}".format(epoch))
+        print("Loss: {}".format(running_loss))
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="MINDsmall")
+    parser.add_argument("--data_path", type=str, default="../MINDsmall")
     parser.add_argument("--d_word_vec", type=int, default=300)
     parser.add_argument("--head_num", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--epoch_num", type=float, default=10)
+    parser.add_argument("--gpu", type=int, default=0)
     args = parser.parse_args()
 
     data_path = args.data_path
     d_word_vec = args.d_word_vec
     head_num = args.head_num
-    '''
-    train_candidate, train_label, train_user_his, test_candidate, \
-        test_user_his, test_index, test_session_data, word_dict = MINDsmall_load(
-            os.path.join("../", data_path))
-    '''
-    # model = NRMS(len(word_dict), d_word_vec, head_num, 16, 16, 256)
-    model = NRMS(1000, d_word_vec, head_num, 16, 16, 300)
+    batch_size = args.batch_size
+    lr = args.lr
+    epN = args.epoch_num
+    gpu = args.gpu
+    train_candidate, train_label, train_user_his, test_candidate, test_label, \
+    test_user_his, word_dict, news_title = MINDsmall_load(data_path)
+    model = NRMS(len(word_dict), 300, 16, 16, 16, 300)
+    train_set = mind_dataset(
+        train_candidate, train_user_his, news_title, train_label)
+    traindataloader = DataLoader(
+        train_set, batch_size=batch_size, shuffle=True)
 
-    news_input_test = torch.randint(0,  200, (30, 50))
-    candidates = torch.randint(0,  200, (5, 50))
-    model.forward(news_input_test, candidates)
+    test_set = mind_dataset(
+        test_candidate, test_user_his, news_title, test_label)
+    testdataloader = DataLoader(
+        test_set, batch_size=batch_size, shuffle=False)
+    train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu)
