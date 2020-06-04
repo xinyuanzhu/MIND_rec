@@ -152,7 +152,7 @@ class mind_dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         return (
-            self.news_title[self.train_candidate[index]],
+            self.news_title[self.candidate[index]],
             self.news_title[self.user_his[index]],
             self.y[index]
         )
@@ -199,6 +199,8 @@ def train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu):
         running_loss = 0.0
         for i, data in enumerate(traindataloader, 0):
             news_input, candidates, labels = data
+            news_input = news_input.long()
+            candidates = candidates.long()
             if gpu:
                 news_input.cuda()
                 candidates.cuda()
