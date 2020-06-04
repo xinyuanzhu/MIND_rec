@@ -204,7 +204,7 @@ class NRMS(nn.Module):
         pred_score = F.softmax(torch.bmm(user_rep, candidates_enc_out))
         pred_score = pred_score.view(
             pred_score.shape[0], pred_score.shape[2])
-        print(pred_score.shape)
+        # print(pred_score.shape)
         return pred_score
 
 
@@ -213,31 +213,59 @@ def train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu):
     print("Training Strat......")
     optimizer = optim.Adam(params=model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
+    if gpu:
+        model.cuda()
+        criterion.cuda()
     for epoch in range(epN):
         running_loss = 0.0
+        num_correct = 0.0
         for i, data in enumerate(traindataloader, 0):
             candidates, news_input, labels = data
             candidates = candidates.long()
             news_input = news_input.long()
             # candidates: 64*5*30
             # news_input: 64*50*30
-            # lables
-            if i == 1:
-                print(labels.shape)
+            # lables: 64*5
             if gpu:
-                news_input.cuda()
                 candidates.cuda()
-                labels.cuda()
-                criterion.cuda()
+                news_input.cuda()
             optimizer.zero_grad()
-
             outputs = model(news_input, candidates)
             loss = criterion(outputs, torch.max(labels, 1)[1])
+            pred = torch.max(outputs, 1)[1]
+            target = torch.max(labels, 1)[1]
+            num_correct += torch.eq(pred, target).sum().float().item()
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
         print("Epoch: {}".format(epoch))
-        print("Loss: {}".format(running_loss))
+        print("Loss: {:.3f}".format(running_loss))
+        print("Acc: {:.3f}".format(num_correct/len(traindataloader.Dataset)))
+        model.eval()
+        with torch.no_grad():
+            test_loss, num_corr = validation(model, testdataloader, criterion)
+
+        print("Test Loss: {:.3f}.. ".format(test_loss),
+              "Test Accuracy: {:.3f}".format(num_corr/len(testdataloader.Dataset)))
+
+
+def validation(model, testdataloader, criterion):
+    running_loss = 0.0
+    num_correct = 0.0
+    for i, data in enumerate(testdataloader, 0):
+        candidates, news_input, labels = data
+        candidates = candidates.long()
+        news_input = news_input.long()
+        if gpu:
+            candidates.cuda()
+            news_input.cuda()
+        outputs = model(news_input, candidates)
+        loss = criterion(outputs, torch.max(labels, 1)[1])
+        pred = torch.max(outputs, 1)[1]
+        target = torch.max(labels, 1)[1]
+        num_correct += torch.eq(pred, target).sum().float().item()
+        running_loss += loss.item()
+    return running_loss, num_correct
 
 
 if __name__ == "__main__":
@@ -259,9 +287,9 @@ if __name__ == "__main__":
     lr = args.lr
     epN = args.epoch_num
     gpu = args.gpu
-    
+
     train_candidate, train_label, train_user_his, test_candidate, test_label, \
-    test_user_his, word_dict, news_title = MINDsmall_load(data_path)
+        test_user_his, word_dict, news_title = MINDsmall_load(data_path)
     model = NRMS(len(word_dict), 300, 16, 16, 16, 300)
     train_set = mind_dataset(
         train_candidate, train_user_his, news_title, train_label)
