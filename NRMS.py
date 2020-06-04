@@ -166,27 +166,45 @@ class NRMS(nn.Module):
         super().__init__()
 
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec)
-        self.news_encoder = Encoder(n_head, d_k, d_v, d_model)
-        '''
-        self.news_encoder_list = nn.ModuleList(
-            Encoder(n_head, d_k, d_v, d_model) for _ in range(30)
+        # self.news_encoder = Encoder(n_head, d_k, d_v, d_model)
+
+        self.news_encoder_list_his = nn.ModuleList(
+            Encoder(n_head, d_k, d_v, d_model) for _ in range(50)
         )
-        '''
+        self.news_encoder_list_candidates = nn.ModuleList(
+            Encoder(n_head, d_k, d_v, d_model) for _ in range(5)
+        )
+
         self.user_encoder = Encoder(n_head, d_k, d_v, d_model)
 
     def forward(self, news_input, candidates):
-        news_emb_seq = self.src_word_emb(news_input).long()
-        cand_emb_seq = self.src_word_emb(candidates).long()
-        print(news_emb_seq.type())
+        news_emb_seq = self.src_word_emb(news_input)
+        cand_emb_seq = self.src_word_emb(candidates)
 
-        news_enc_out = self.news_encoder(news_emb_seq.float())
-
+        news_enc_out = self.news_encoder_list_his[0](news_emb_seq[:, 0])
         news_enc_out = news_enc_out.view(
             1, news_enc_out.shape[0], news_enc_out.shape[1])
+        for i, encoder in enumerate(self.news_encoder_list_his[1:]):
+            tmp = encoder(news_emb_seq[:, i+1])
+            tmp = tmp.view(1, tmp.shape[0], tmp.shape[1])
+            news_enc_out = torch.cat((news_enc_out, tmp), dim=0)
+        news_enc_out = news_enc_out.transpose(0, 1)
 
-        user_rep = self.user_encoder(news_enc_out)
-        candi_vec = self.news_encoder(cand_emb_seq.float()).reshape(-1, 5)
-        pred_score = F.softmax(torch.matmul(user_rep, candi_vec))
+        user_rep = self.user_encoder(news_enc_out).reshape(-1, 1, 300)
+        candidates_enc_out = self.news_encoder_list_candidates[0](
+            news_emb_seq[:, 0])
+        candidates_enc_out = candidates_enc_out.view(
+            1, candidates_enc_out.shape[0], candidates_enc_out.shape[1])
+        for i, encoder in enumerate(self.news_encoder_list_candidates[1:]):
+            tmp = encoder(news_emb_seq[:, i+1])
+            tmp = tmp.view(1, tmp.shape[0], tmp.shape[1])
+            candidates_enc_out = torch.cat((candidates_enc_out, tmp), dim=0)
+        candidates_enc_out = candidates_enc_out.transpose(0, 1).transpose(1, 2)
+        # candi_vec = torch.tensor(candidates_enc_out).reshape(-1, 5)
+        pred_score = F.softmax(torch.bmm(user_rep, candidates_enc_out))
+        pred_score = pred_score.view(
+            pred_score.shape[0], pred_score.shape[2])
+        print(pred_score.shape)
         return pred_score
 
 
@@ -237,6 +255,7 @@ if __name__ == "__main__":
     lr = args.lr
     epN = args.epoch_num
     gpu = args.gpu
+    
     train_candidate, train_label, train_user_his, test_candidate, test_label, \
     test_user_his, word_dict, news_title = MINDsmall_load(data_path)
     model = NRMS(len(word_dict), 300, 16, 16, 16, 300)
@@ -250,3 +269,9 @@ if __name__ == "__main__":
     testdataloader = DataLoader(
         test_set, batch_size=batch_size, shuffle=False)
     train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu)
+    '''
+    model = NRMS(100000, 300, 16, 16, 16, 300)
+    test_news_input = torch.randint(0, 1000, (64, 50, 30))
+    test_candidates_input = torch.randint(0, 1000, (64, 5, 30))
+    model.forward(test_news_input, test_candidates_input)
+    '''

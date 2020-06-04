@@ -50,7 +50,6 @@ class MultiHeadAttention(nn.Module):
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
         sz_b, len_q, len_k, len_v = q.size(0), q.size(1), k.size(1), v.size(1)
 
-
         q = self.w_qs(q).view(sz_b, len_q, n_head, d_k)
         k = self.w_ks(k).view(sz_b, len_k, n_head, d_k)
         v = self.w_vs(v).view(sz_b, len_v, n_head, d_v)
@@ -95,12 +94,10 @@ class Encoder(nn.Module):
 
     def forward(self, emb_seq):
 
-        enc_output = self.dropout(emb_seq)
+        enc_output = self.dropout(emb_seq.float())
         enc_output, enc_slf_attn = self.encoder_layer(
             enc_output)
         rep = F.tanh(self.add_att_1(enc_output))
         add_att_w = F.softmax(self.add_att_2(rep))
-        print(enc_output.shape)
-        print(add_att_w.shape)
         out = torch.sum(enc_output*add_att_w, dim=1)
         return out
