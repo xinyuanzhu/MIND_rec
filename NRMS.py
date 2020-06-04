@@ -115,7 +115,7 @@ def MINDsmall_load(data_path, behaviors_fname="behaviors.tsv", news_fname="news.
         index.append(len(test_candidate))
         for doc in alldoc_index:
             test_candidate.append(doc)
-            test_user_his.append(click_his_ids+[0]*(50-len(click_his_ids)))
+            test_user_his.append(click_his_index+[0]*(50-len(click_his_index)))
         index = []
         index.append(len(test_candidate))
         test_index.append(index)
@@ -136,12 +136,30 @@ class NRMS(nn.Module):
         super().__init__()
 
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec)
-        self.title_encoder = Encoder(n_head, d_k, d_v, d_model)
-        # Embedding, dropout, self-attention
+        self.news_encoder = Encoder(n_head, d_k, d_v, d_model)
+        '''
+        self.news_encoder_list = nn.ModuleList(
+            Encoder(n_head, d_k, d_v, d_model) for _ in range(30)
+        )
+        '''
         self.user_encoder = Encoder(n_head, d_k, d_v, d_model)
 
-    def forward(self, ):
-
+    def forward(self, news_input, candidates):
+        news_emb_seq = self.src_word_emb(news_input).long()
+        cand_emb_seq = self.src_word_emb(candidates).long()
+        print(news_emb_seq.type())
+        '''
+        for ind, news_encoder in enumerate(self.news_encoder_list):
+            news_rep_list.append(news_encoder(emb_seq[ind]))
+        '''
+        news_enc_out = self.news_encoder(news_emb_seq.float())
+        
+        news_enc_out = news_enc_out.view(1, news_enc_out.shape[0], news_enc_out.shape[1])
+        
+        user_rep = self.user_encoder(news_enc_out)
+        candi_vec = self.news_encoder(cand_emb_seq.float()).reshape(-1, 5)
+        pred_score = F.softmax(torch.matmul(user_rep, candi_vec))
+        return pred_score
 
 
 if __name__ == "__main__":
@@ -149,13 +167,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, default="MINDsmall")
     parser.add_argument("--d_word_vec", type=int, default=300)
-    parser.add_argument("--head_num", type=int, default=20)
+    parser.add_argument("--head_num", type=int, default=16)
     args = parser.parse_args()
 
     data_path = args.data_path
     d_word_vec = args.d_word_vec
     head_num = args.head_num
-
+    '''
     train_candidate, train_label, train_user_his, test_candidate, \
         test_user_his, test_index, test_session_data, word_dict = MINDsmall_load(
-            data_path)
+            os.path.join("../", data_path))
+    '''
+    # model = NRMS(len(word_dict), d_word_vec, head_num, 16, 16, 256)
+    model = NRMS(1000, d_word_vec, head_num, 16, 16, 300)
+
+    news_input_test = torch.randint(0,  200, (30, 50))
+    candidates = torch.randint(0,  200, (5, 50))
+    model.forward(news_input_test, candidates)

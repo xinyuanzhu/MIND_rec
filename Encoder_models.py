@@ -35,9 +35,9 @@ class MultiHeadAttention(nn.Module):
         self.d_k = d_k
         self.d_v = d_v
 
-        self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.w_ks = nn.Linear(d_model, n_head * d_k, bias=False)
-        self.w_vs = nn.Linear(d_model, n_head * d_v, bias=False)
+        self.w_qs = nn.Linear(300, n_head * d_k, bias=False)
+        self.w_ks = nn.Linear(300, n_head * d_k, bias=False)
+        self.w_vs = nn.Linear(300, n_head * d_v, bias=False)
         self.fc = nn.Linear(n_head * d_v, d_model, bias=False)
 
         self.attention = ScaledDotProductAttention(temperature=d_k ** 0.5)
@@ -50,8 +50,7 @@ class MultiHeadAttention(nn.Module):
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
         sz_b, len_q, len_k, len_v = q.size(0), q.size(1), k.size(1), v.size(1)
 
-        residual = q
-        q = self.layer_norm(q)
+
         q = self.w_qs(q).view(sz_b, len_q, n_head, d_k)
         k = self.w_ks(k).view(sz_b, len_k, n_head, d_k)
         v = self.w_vs(v).view(sz_b, len_v, n_head, d_v)
@@ -63,7 +62,6 @@ class MultiHeadAttention(nn.Module):
 
         q = q.transpose(1, 2).contiguous().view(sz_b, len_q, -1)
         q = self.dropout(self.fc(q))
-        q += residual
 
         return q, attn
 
@@ -92,11 +90,17 @@ class Encoder(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.encoder_layer = EncoderLayer(
             d_model, n_head, d_k, d_v, dropout=dropout)
+        self.add_att_1 = nn.Linear(d_model, 200)
+        self.add_att_2 = nn.Linear(200, 1)
 
-    def forward(self, emb_seq, src_mask):
+    def forward(self, emb_seq):
 
         enc_output = self.dropout(emb_seq)
         enc_output, enc_slf_attn = self.encoder_layer(
-            enc_output, slf_attn_mask=src_mask)
-
-        return enc_output, enc_slf_attn
+            enc_output)
+        rep = F.tanh(self.add_att_1(enc_output))
+        add_att_w = F.softmax(self.add_att_2(rep))
+        print(enc_output.shape)
+        print(add_att_w.shape)
+        out = torch.sum(enc_output*add_att_w, dim=1)
+        return out
