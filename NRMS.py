@@ -224,19 +224,15 @@ def train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu):
             # lables
             if i == 1:
                 print(labels.shape)
-            
             if gpu:
                 news_input.cuda()
                 candidates.cuda()
                 labels.cuda()
                 criterion.cuda()
-
             optimizer.zero_grad()
 
             outputs = model(news_input, candidates)
-            print(outputs.shape, labels.shape)
             loss = criterion(outputs, torch.max(labels, 1)[1])
-            
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
