@@ -13,7 +13,7 @@ from nltk.tokenize import word_tokenize
 from Encoder_models import *
 from utils import *
 import torch.optim as optim
-
+nltk.data.path = ['/gdata/zhuxy/nltk_data']
 
 def MINDsmall_load(data_path, behaviors_fname="behaviors.tsv", news_fname="news.tsv"):
     train_behaviors = np.genfromtxt(fname=os.path.join(
@@ -30,10 +30,10 @@ def MINDsmall_load(data_path, behaviors_fname="behaviors.tsv", news_fname="news.
         data_path, "MINDsmall_dev", news_fname), delimiter="\t", comments=None, dtype=str, encoding='UTF-8')
     news = {}
     for line in train_newsdata:
-        news[line[0]] = word_tokenize(line[3].lower())
+        news[line[0]] = nltk.word_tokenize(line[3].lower())
     for line in test_newsdata:
         if line[0] not in news:
-            news[line[0]] = word_tokenize(line[3].lower())
+            news[line[0]] = nltk.word_tokenize(line[3].lower())
     newsindex = {'NULL': 0}
     for newsid in news:
         newsindex[newsid] = len(newsindex)
@@ -214,9 +214,11 @@ def train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu):
     optimizer = optim.Adam(params=model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
     if gpu:
-        model.cuda()
-        criterion.cuda()
+        print("CUDA")
+        model = model.cuda()
+        criterion= criterion.cuda()
     for epoch in range(epN):
+        model.train()
         running_loss = 0.0
         num_correct = 0.0
         for i, data in enumerate(traindataloader, 0):
@@ -227,8 +229,9 @@ def train(model, traindataloader, testdataloader, batch_size, lr, epN, gpu):
             # news_input: 64*50*30
             # lables: 64*5
             if gpu:
-                candidates.cuda()
-                news_input.cuda()
+                candidates = candidates.cuda()
+                news_input = news_input.cuda()
+                labels = labels.cuda()
             optimizer.zero_grad()
             outputs = model(news_input, candidates)
             loss = criterion(outputs, torch.max(labels, 1)[1])
@@ -271,7 +274,7 @@ def validation(model, testdataloader, criterion):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="../MINDsmall")
+    parser.add_argument("--data_path", type=str, default="/gdata/zhuxy/MINDsmall")
     parser.add_argument("--d_word_vec", type=int, default=300)
     parser.add_argument("--head_num", type=int, default=16)
     parser.add_argument("--batch_size", type=int, default=64)
